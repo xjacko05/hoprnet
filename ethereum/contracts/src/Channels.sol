@@ -214,6 +214,20 @@ contract HoprChannels is
         uint256 porSecret;
     }
 
+    struct AggregatedTicket {
+        Balance amount;
+        TicketIndex ticketIndexSource;
+        TicketIndex ticketIndexDest;
+        ChannelEpoch epochSource;
+        ChannelEpoch epochDest;
+        TicketIndexOffset indexOffsetSource;
+        TicketIndexOffset indexOffsetDest;
+        bytes32 channelIdSource;
+        bytes32 channelIdDest;
+        HoprCrypto.CompactSignature signatureSource;
+        HoprCrypto.CompactSignature signatureDest;
+    }
+
     /**
      * Stores channels, indexed by their channelId
      */
@@ -324,6 +338,119 @@ contract HoprChannels is
         HoprMultiSig.noSafeSet()
     {
         _redeemTicketInternal(msg.sender, redeemable, params);
+    }
+
+    /**
+     * Redeems aggregated ticket, updates state of both payment channels accordingly
+     *
+     * @param redeemable aggregated ticket, signatures of paricipating parties
+     */
+    function redeemAggregatedTicket(
+        AggregatedTicket calldata redeemable
+    )
+        external
+        validateBalance(redeemable.amount)
+    {
+        Channel storage spendingChannel = channels[redeemable.channelIdSource];
+        Channel storage earningChannel = channels[redeemable.channelIdDest];
+
+        if (spendingChannel.status != ChannelStatus.OPEN && spendingChannel.status != ChannelStatus.PENDING_TO_CLOSE) {
+            revert WrongChannelState({ reason: "spending channel must be OPEN or PENDING_TO_CLOSE" });
+        }
+
+        if (ChannelEpoch.unwrap(spendingChannel.epoch) != ChannelEpoch.unwrap(redeemable.epochSource)) {
+            revert WrongChannelState({ reason: "channel epoch must match" });
+        }
+
+        // Aggregatable Tickets - validity interval:
+        // A ticket has a base index and an offset. The offset must be > 0,
+        // while the base index must be >= the currently set ticket index in the
+        // channel.
+        uint48 spendingChannelBaseIndex = TicketIndex.unwrap(redeemable.ticketIndexSource);
+        uint32 spendingChannelBaseIndexOffset = TicketIndexOffset.unwrap(redeemable.indexOffsetSource);
+        uint48 spendingChannelCurrentIndex = TicketIndex.unwrap(spendingChannel.ticketIndex);
+        if (spendingChannelBaseIndexOffset < 1 || spendingChannelBaseIndex < spendingChannelCurrentIndex) {
+            revert InvalidAggregatedTicketInterval();
+        }
+        
+        uint48 earningChannelBaseIndex = TicketIndex.unwrap(redeemable.ticketIndexDest);
+        uint32 earningChannelBaseIndexOffset = TicketIndexOffset.unwrap(redeemable.indexOffsetDest);
+        uint48 earningChannelCurrentIndex = TicketIndex.unwrap(earningChannel.ticketIndex);
+        if (earningChannelBaseIndexOffset < 1 || earningChannelBaseIndex < earningChannelCurrentIndex) {
+            revert InvalidAggregatedTicketInterval();
+        }
+
+        if (Balance.unwrap(spendingChannel.balance) < Balance.unwrap(redeemable.amount)) {
+            revert InsufficientChannelBalance();
+        }
+
+        // Deviates from EIP712 due to computed property and non-standard struct property encoding
+        bytes32 ticketHash = _getAggregatedTicketHash(redeemable);
+
+        address source = ECDSA.recover(ticketHash, redeemable.signatureSource.r, redeemable.signatureSource.vs);
+        address destination = ECDSA.recover(ticketHash, redeemable.signatureDest.r, redeemable.signatureDest.vs);
+        if (_getChannelId(source, destination) != redeemable.channelIdSource) {
+            revert InvalidTicketSignature();
+        }
+        if (_getChannelId(destination, source) != redeemable.channelIdDest) {
+            revert InvalidTicketSignature();
+        }
+
+        spendingChannel.ticketIndex = TicketIndex.wrap(spendingChannelBaseIndex + spendingChannelBaseIndexOffset);
+        spendingChannel.balance =
+            Balance.wrap(Balance.unwrap(spendingChannel.balance) - Balance.unwrap(redeemable.amount));
+        indexEvent(
+            abi.encodePacked(ChannelBalanceDecreased.selector, redeemable.channelIdSource, spendingChannel.balance)
+        );
+        emit ChannelBalanceDecreased(redeemable.channelIdSource, spendingChannel.balance);
+
+        // Informs about new ticketIndex
+        indexEvent(abi.encodePacked(TicketRedeemed.selector, redeemable.channelIdSource, spendingChannel.ticketIndex));
+        emit TicketRedeemed(redeemable.channelIdSource, spendingChannel.ticketIndex);
+
+        if (earningChannel.status == ChannelStatus.CLOSED) {
+            // The other channel does not exist, so we need to transfer funds directly
+            if (token.transfer(msg.sender, Balance.unwrap(redeemable.amount)) != true) {
+                revert TokenTransferFailed();
+            }
+        } else {
+            // this CAN produce channels with more stake than MAX_USED_AMOUNT - which does not lead
+            // to overflows since total supply < type(uin96).max
+            earningChannel.ticketIndex = TicketIndex.wrap(earningChannelBaseIndex + earningChannelBaseIndexOffset);
+            earningChannel.balance =
+                Balance.wrap(Balance.unwrap(earningChannel.balance) + Balance.unwrap(redeemable.amount));
+            indexEvent(abi.encodePacked(ChannelBalanceIncreased.selector, redeemable.channelIdDest, earningChannel.balance));
+            emit ChannelBalanceIncreased(redeemable.channelIdDest, earningChannel.balance);
+            // Informs about new ticketIndex
+            indexEvent(abi.encodePacked(TicketRedeemed.selector, redeemable.channelIdDest, earningChannel.ticketIndex));
+            emit TicketRedeemed(redeemable.channelIdDest, earningChannel.ticketIndex);
+        }
+    }
+
+    /**
+     * Gets the hash of a aggregated ticket upon which the signature has been created.
+     *
+     * @param redeemable aggregated ticket data
+     */
+    function _getAggregatedTicketHash(AggregatedTicket calldata redeemable) public view returns (bytes32) {
+        
+        uint256 secondPart = (uint256(Balance.unwrap(redeemable.amount)) << 208)
+            | (uint256(TicketIndex.unwrap(redeemable.ticketIndexSource)) << 160)
+            | (uint256(TicketIndex.unwrap(redeemable.ticketIndexDest)) << 112)
+            | (uint256(TicketIndexOffset.unwrap(redeemable.indexOffsetSource)) << 80)
+            | (uint256(TicketIndexOffset.unwrap(redeemable.indexOffsetDest)) << 48)
+            | (uint256(ChannelEpoch.unwrap(redeemable.epochSource)) << 24)
+            | (uint256(ChannelEpoch.unwrap(redeemable.epochDest)));
+
+        // Deviates from EIP712 due to computed property and non-standard struct property encoding
+        bytes32 hashStruct = keccak256(
+            abi.encode(
+                this.redeemAggregatedTicket.selector,
+                keccak256(abi.encodePacked(redeemable.channelIdSource, redeemable.channelIdDest, secondPart))
+            )
+        );
+
+        return keccak256(abi.encodePacked(bytes1(0x19), bytes1(0x01), domainSeparator, hashStruct));
     }
 
     /**

@@ -23,6 +23,18 @@ abstract contract CryptoUtils is Test, HoprCrypto, SECP2561k {
         uint256 porSecret;
     }
 
+    struct RedeemAggregatedTicketArgBuilder {
+        uint256 privKeyA;
+        uint256 privKeyB;
+        bytes32 dst;
+        address src;
+        address dest;
+        uint256 amount;
+        uint256 maxTicketIndex;
+        uint256 indexOffset;
+        uint256 epoch;
+    }
+
     function _getChannelId(address source, address destination) public pure returns (bytes32) {
         return keccak256(abi.encodePacked(source, destination));
     }
@@ -68,6 +80,62 @@ abstract contract CryptoUtils is Test, HoprCrypto, SECP2561k {
         redeemable = HoprChannels.RedeemableTicket(ticketData, sig, args.porSecret);
 
         vrf = getVRFParameters(args.privKeyB, abi.encodePacked(args.dst), ticketHash);
+    }
+
+    function getRedeemableAggregatedTicket(RedeemAggregatedTicketArgBuilder memory args)
+        internal
+        pure
+        returns (HoprChannels.AggregatedTicket memory redeemable)
+    {
+        bytes32 channelIdSource = _getChannelId(args.src, args.dest);
+        bytes32 channelIdDest = _getChannelId(args.dest, args.src);
+
+        // HoprChannels._getAggregatedTicketHash
+        uint256 secondPart = (args.amount << 208)
+        | (args.maxTicketIndex << 160)
+        | (args.maxTicketIndex << 112)
+        | (args.indexOffset << 80)
+        | (args.indexOffset << 48)
+        | (args.epoch << 24)
+        | (args.epoch);
+
+        // Deviates from EIP712 due to computed property and non-standard struct property encoding
+        bytes32 hashStruct = keccak256(
+            abi.encode(
+                HoprChannels.redeemAggregatedTicket.selector, keccak256(abi.encodePacked(channelIdSource, channelIdDest, secondPart))
+            )
+        );
+
+        bytes32 ticketHash = keccak256(abi.encodePacked(bytes1(0x19), bytes1(0x01), args.dst, hashStruct));
+
+        CompactSignature memory sigSource;
+        CompactSignature memory sigDest;
+
+        {
+            (uint8 vSource, bytes32 rSource, bytes32 sSource) = vm.sign(args.privKeyA, ticketHash);
+
+            sigSource = toCompactSignature(vSource, rSource, sSource);
+        }
+
+        {
+            (uint8 vDest, bytes32 rDest, bytes32 sDest) = vm.sign(args.privKeyB, ticketHash);
+
+            sigDest = toCompactSignature(vDest, rDest, sDest);
+        }
+
+        redeemable = HoprChannels.AggregatedTicket(
+            HoprChannels.Balance.wrap(uint96(args.amount)),
+            HoprChannels.TicketIndex.wrap(uint48(args.maxTicketIndex)),
+            HoprChannels.TicketIndex.wrap(uint48(args.maxTicketIndex)),
+            HoprChannels.ChannelEpoch.wrap(uint24(args.epoch)),
+            HoprChannels.ChannelEpoch.wrap(uint24(args.epoch)),
+            HoprChannels.TicketIndexOffset.wrap(uint32(args.indexOffset)),
+            HoprChannels.TicketIndexOffset.wrap(uint32(args.indexOffset)),
+            channelIdSource,
+            channelIdDest,
+            sigSource,
+            sigDest
+        );
     }
 
     function toCompactSignature(

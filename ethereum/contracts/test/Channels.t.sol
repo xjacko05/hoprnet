@@ -789,6 +789,189 @@ contract HoprChannelsTest is Test, ERC1820RegistryFixtureTest, CryptoUtils, Hopr
         vm.clearMockedCalls();
     }
 
+    function test_redeemTicketEmpty(
+        uint256 privKeyA,
+        uint256 privKeyB,
+        address safeContract,
+        uint256 porSecret,
+        uint96 channelAmount,
+        uint96 amount,
+        uint48 maxTicketIndex,
+        uint32 indexOffset,
+        uint24 epoch,
+        uint48 channelTicketIndex
+    )
+        public
+    {
+        porSecret = bound(porSecret, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        privKeyA = bound(privKeyA, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        privKeyB = bound(privKeyB, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        vm.assume(privKeyA != privKeyB);
+        amount = uint96(bound(amount, MIN_USED_BALANCE, MAX_USED_BALANCE));
+        channelAmount = uint96(bound(channelAmount, amount, MAX_USED_BALANCE));
+        indexOffset = uint32(bound(indexOffset, 1, type(uint32).max));
+        channelTicketIndex = uint48(bound(channelTicketIndex, 0, type(uint48).max - indexOffset - 1));
+        maxTicketIndex = uint48(bound(maxTicketIndex, channelTicketIndex + 1, type(uint48).max - indexOffset));
+
+        address src = vm.addr(privKeyA);
+        address dest = vm.addr(privKeyB);
+        vm.assume(safeContract != address(0) && safeContract != src && safeContract != dest);
+
+        _helperNoSafeSetMock(dest);
+        _helperTokenTransferMock(dest, amount);
+
+        RedeemTicketArgBuilder memory args = RedeemTicketArgBuilder(
+            privKeyA,
+            privKeyB,
+            hoprChannels.domainSeparator(),
+            src,
+            dest,
+            amount,
+            maxTicketIndex,
+            indexOffset,
+            epoch,
+            HoprChannels.WinProb.unwrap(WIN_PROB_100),
+            porSecret
+        );
+
+        hoprChannels._storeChannel(
+            src, dest, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+
+        (HoprChannels.RedeemableTicket memory redeemable, HoprCrypto.VRFParameters memory vrf) =
+            CryptoUtils.getRedeemableTicket(args);
+
+        vm.prank(dest);
+
+        hoprChannels._storeChannel(
+            src, dest, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+        vm.prank(dest);
+    }
+
+    function test_redeemTicketOnce(
+        uint256 privKeyA,
+        uint256 privKeyB,
+        address safeContract,
+        uint256 porSecret,
+        uint96 channelAmount,
+        uint96 amount,
+        uint48 maxTicketIndex,
+        uint32 indexOffset,
+        uint24 epoch,
+        uint48 channelTicketIndex
+    )
+        public
+    {
+        porSecret = bound(porSecret, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        privKeyA = bound(privKeyA, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        privKeyB = bound(privKeyB, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        vm.assume(privKeyA != privKeyB);
+        amount = uint96(bound(amount, MIN_USED_BALANCE, MAX_USED_BALANCE));
+        channelAmount = uint96(bound(channelAmount, amount, MAX_USED_BALANCE));
+        indexOffset = uint32(bound(indexOffset, 1, type(uint32).max));
+        channelTicketIndex = uint48(bound(channelTicketIndex, 0, type(uint48).max - indexOffset - 1));
+        maxTicketIndex = uint48(bound(maxTicketIndex, channelTicketIndex + 1, type(uint48).max - indexOffset));
+
+        address src = vm.addr(privKeyA);
+        address dest = vm.addr(privKeyB);
+        vm.assume(safeContract != address(0) && safeContract != src && safeContract != dest);
+
+        _helperNoSafeSetMock(dest);
+        _helperTokenTransferMock(dest, amount);
+
+        RedeemTicketArgBuilder memory args = RedeemTicketArgBuilder(
+            privKeyA,
+            privKeyB,
+            hoprChannels.domainSeparator(),
+            src,
+            dest,
+            amount,
+            maxTicketIndex,
+            indexOffset,
+            epoch,
+            HoprChannels.WinProb.unwrap(WIN_PROB_100),
+            porSecret
+        );
+
+        hoprChannels._storeChannel(
+            src, dest, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+
+        (HoprChannels.RedeemableTicket memory redeemable, HoprCrypto.VRFParameters memory vrf) =
+            CryptoUtils.getRedeemableTicket(args);
+
+        vm.prank(dest);
+        hoprChannels.redeemTicket(redeemable, vrf);
+
+        hoprChannels._storeChannel(
+            src, dest, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+        vm.prank(dest);
+    }
+
+    function test_redeemTicketTwice(
+        uint256 privKeyA,
+        uint256 privKeyB,
+        address safeContract,
+        uint256 porSecret,
+        uint96 channelAmount,
+        uint96 amount,
+        uint48 maxTicketIndex,
+        uint32 indexOffset,
+        uint24 epoch,
+        uint48 channelTicketIndex
+    )
+        public
+    {
+        porSecret = bound(porSecret, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        privKeyA = bound(privKeyA, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        privKeyB = bound(privKeyB, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        vm.assume(privKeyA != privKeyB);
+        amount = uint96(bound(amount, MIN_USED_BALANCE, MAX_USED_BALANCE));
+        channelAmount = uint96(bound(channelAmount, amount, MAX_USED_BALANCE));
+        indexOffset = uint32(bound(indexOffset, 1, type(uint32).max));
+        channelTicketIndex = uint48(bound(channelTicketIndex, 0, type(uint48).max - indexOffset - 1));
+        maxTicketIndex = uint48(bound(maxTicketIndex, channelTicketIndex + 1, type(uint48).max - indexOffset));
+
+        address src = vm.addr(privKeyA);
+        address dest = vm.addr(privKeyB);
+        vm.assume(safeContract != address(0) && safeContract != src && safeContract != dest);
+
+        _helperNoSafeSetMock(dest);
+        _helperTokenTransferMock(dest, amount);
+
+        RedeemTicketArgBuilder memory args = RedeemTicketArgBuilder(
+            privKeyA,
+            privKeyB,
+            hoprChannels.domainSeparator(),
+            src,
+            dest,
+            amount,
+            maxTicketIndex,
+            indexOffset,
+            epoch,
+            HoprChannels.WinProb.unwrap(WIN_PROB_100),
+            porSecret
+        );
+
+        hoprChannels._storeChannel(
+            src, dest, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+
+        (HoprChannels.RedeemableTicket memory redeemable, HoprCrypto.VRFParameters memory vrf) =
+            CryptoUtils.getRedeemableTicket(args);
+
+        vm.prank(dest);
+        hoprChannels.redeemTicket(redeemable, vrf);
+
+        hoprChannels._storeChannel(
+            src, dest, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+        vm.prank(dest);
+        hoprChannels.redeemTicket(redeemable, vrf);
+    }
+
     function test_redeemTicket(
         uint256 privKeyA,
         uint256 privKeyB,
@@ -894,6 +1077,276 @@ contract HoprChannelsTest is Test, ERC1820RegistryFixtureTest, CryptoUtils, Hopr
 
         vm.prank(safeContract);
         hoprChannels.redeemTicketSafe(dest, redeemable, vrf);
+    }
+
+    function test_redeemAggregatedTicketEmpty(
+        uint256 privKeyA,
+        uint256 privKeyB,
+        address safeContract,
+        uint96 channelAmount,
+        uint96 amount,
+        uint48 maxTicketIndex,
+        uint32 indexOffset,
+        uint24 epoch,
+        uint48 channelTicketIndex
+    )
+        public
+    {
+        privKeyA = bound(privKeyA, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        privKeyB = bound(privKeyB, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        vm.assume(privKeyA != privKeyB);
+        amount = uint96(bound(amount, MIN_USED_BALANCE, MAX_USED_BALANCE));
+        channelAmount = uint96(bound(channelAmount, amount, MAX_USED_BALANCE));
+        indexOffset = uint32(bound(indexOffset, 1, type(uint32).max));
+        channelTicketIndex = uint48(bound(channelTicketIndex, 0, type(uint48).max - indexOffset - 1));
+        maxTicketIndex = uint48(bound(maxTicketIndex, channelTicketIndex + 1, type(uint48).max - indexOffset));
+        
+        address src = vm.addr(privKeyA);
+        address dest = vm.addr(privKeyB);
+        vm.assume(safeContract != address(0) && safeContract != src && safeContract != dest);
+
+        _helperNoSafeSetMock(dest);
+        _helperNoSafeSetMock(src);
+        _helperTokenTransferMock(dest, amount);
+        _helperTokenTransferMock(src, amount);
+
+        RedeemAggregatedTicketArgBuilder memory args = RedeemAggregatedTicketArgBuilder(
+            privKeyA,
+            privKeyB,
+            hoprChannels.domainSeparator(),
+            src,
+            dest,
+            amount,
+            maxTicketIndex,
+            indexOffset,
+            epoch
+        );
+
+        hoprChannels._storeChannel(
+            src, dest, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+        hoprChannels._storeChannel(
+            dest, src, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+
+        HoprChannels.AggregatedTicket memory redeemable = CryptoUtils.getRedeemableAggregatedTicket(args);
+
+        hoprChannels._storeChannel(
+            src, dest, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+        hoprChannels._storeChannel(
+            dest, src, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+
+    }
+
+    function test_redeemAggregatedTicketOnce(
+        uint256 privKeyA,
+        uint256 privKeyB,
+        address safeContract,
+        uint96 channelAmount,
+        uint96 amount,
+        uint48 maxTicketIndex,
+        uint32 indexOffset,
+        uint24 epoch,
+        uint48 channelTicketIndex
+    )
+        public
+    {
+        privKeyA = bound(privKeyA, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        privKeyB = bound(privKeyB, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        vm.assume(privKeyA != privKeyB);
+        amount = uint96(bound(amount, MIN_USED_BALANCE, MAX_USED_BALANCE));
+        channelAmount = uint96(bound(channelAmount, amount, MAX_USED_BALANCE));
+        indexOffset = uint32(bound(indexOffset, 1, type(uint32).max));
+        channelTicketIndex = uint48(bound(channelTicketIndex, 0, type(uint48).max - indexOffset - 1));
+        maxTicketIndex = uint48(bound(maxTicketIndex, channelTicketIndex + 1, type(uint48).max - indexOffset));
+        
+        address src = vm.addr(privKeyA);
+        address dest = vm.addr(privKeyB);
+        vm.assume(safeContract != address(0) && safeContract != src && safeContract != dest);
+
+        _helperNoSafeSetMock(dest);
+        _helperNoSafeSetMock(src);
+        _helperTokenTransferMock(dest, amount);
+        _helperTokenTransferMock(src, amount);
+
+        RedeemAggregatedTicketArgBuilder memory args = RedeemAggregatedTicketArgBuilder(
+            privKeyA,
+            privKeyB,
+            hoprChannels.domainSeparator(),
+            src,
+            dest,
+            amount,
+            maxTicketIndex,
+            indexOffset,
+            epoch
+        );
+
+        hoprChannels._storeChannel(
+            src, dest, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+        hoprChannels._storeChannel(
+            dest, src, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+
+        HoprChannels.AggregatedTicket memory redeemable = CryptoUtils.getRedeemableAggregatedTicket(args);
+
+        hoprChannels.redeemAggregatedTicket(redeemable);
+
+        hoprChannels._storeChannel(
+            src, dest, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+        hoprChannels._storeChannel(
+            dest, src, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+    }
+
+    function test_redeemAggregatedTicketTwice(
+        uint256 privKeyA,
+        uint256 privKeyB,
+        address safeContract,
+        uint96 channelAmount,
+        uint96 amount,
+        uint48 maxTicketIndex,
+        uint32 indexOffset,
+        uint24 epoch,
+        uint48 channelTicketIndex
+    )
+        public
+    {
+        privKeyA = bound(privKeyA, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        privKeyB = bound(privKeyB, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        vm.assume(privKeyA != privKeyB);
+        amount = uint96(bound(amount, MIN_USED_BALANCE, MAX_USED_BALANCE));
+        channelAmount = uint96(bound(channelAmount, amount, MAX_USED_BALANCE));
+        indexOffset = uint32(bound(indexOffset, 1, type(uint32).max));
+        channelTicketIndex = uint48(bound(channelTicketIndex, 0, type(uint48).max - indexOffset - 1));
+        maxTicketIndex = uint48(bound(maxTicketIndex, channelTicketIndex + 1, type(uint48).max - indexOffset));
+        
+        address src = vm.addr(privKeyA);
+        address dest = vm.addr(privKeyB);
+        vm.assume(safeContract != address(0) && safeContract != src && safeContract != dest);
+
+        _helperNoSafeSetMock(dest);
+        _helperNoSafeSetMock(src);
+        _helperTokenTransferMock(dest, amount);
+        _helperTokenTransferMock(src, amount);
+
+        RedeemAggregatedTicketArgBuilder memory args = RedeemAggregatedTicketArgBuilder(
+            privKeyA,
+            privKeyB,
+            hoprChannels.domainSeparator(),
+            src,
+            dest,
+            amount,
+            maxTicketIndex,
+            indexOffset,
+            epoch
+        );
+
+        hoprChannels._storeChannel(
+            src, dest, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+        hoprChannels._storeChannel(
+            dest, src, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+
+        HoprChannels.AggregatedTicket memory redeemable = CryptoUtils.getRedeemableAggregatedTicket(args);
+
+        hoprChannels.redeemAggregatedTicket(redeemable);
+
+        hoprChannels._storeChannel(
+            src, dest, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+        hoprChannels._storeChannel(
+            dest, src, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+
+        hoprChannels.redeemAggregatedTicket(redeemable);
+    }
+
+    function test_redeemAggregatedTicket(
+        uint256 privKeyA,
+        uint256 privKeyB,
+        address safeContract,
+        uint96 channelAmount,
+        uint96 amount,
+        uint48 maxTicketIndex,
+        uint32 indexOffset,
+        uint24 epoch,
+        uint48 channelTicketIndex
+    )
+        public
+    {
+        privKeyA = bound(privKeyA, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        privKeyB = bound(privKeyB, 1, HoprCrypto.SECP256K1_FIELD_ORDER - 1);
+        vm.assume(privKeyA != privKeyB);
+        amount = uint96(bound(amount, MIN_USED_BALANCE, MAX_USED_BALANCE));
+        channelAmount = uint96(bound(channelAmount, amount, MAX_USED_BALANCE));
+        indexOffset = uint32(bound(indexOffset, 1, type(uint32).max));
+        channelTicketIndex = uint48(bound(channelTicketIndex, 0, type(uint48).max - indexOffset - 1));
+        maxTicketIndex = uint48(bound(maxTicketIndex, channelTicketIndex + 1, type(uint48).max - indexOffset));
+        
+        address src = vm.addr(privKeyA);
+        address dest = vm.addr(privKeyB);
+        vm.assume(safeContract != address(0) && safeContract != src && safeContract != dest);
+
+        _helperNoSafeSetMock(dest);
+        _helperNoSafeSetMock(src);
+        _helperTokenTransferMock(dest, amount);
+        _helperTokenTransferMock(src, amount);
+
+        RedeemAggregatedTicketArgBuilder memory args = RedeemAggregatedTicketArgBuilder(
+            privKeyA,
+            privKeyB,
+            hoprChannels.domainSeparator(),
+            src,
+            dest,
+            amount,
+            maxTicketIndex,
+            indexOffset,
+            epoch
+        );
+
+        hoprChannels._storeChannel(
+            src, dest, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+        hoprChannels._storeChannel(
+            dest, src, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+
+        HoprChannels.AggregatedTicket memory redeemable = CryptoUtils.getRedeemableAggregatedTicket(args);
+
+        vm.expectEmit(true, false, false, true, address(hoprChannels));
+        emit ChannelBalanceDecreased(redeemable.channelIdSource, HoprChannels.Balance.wrap(channelAmount - amount));
+        vm.expectEmit(true, false, false, true, address(hoprChannels));
+        emit TicketRedeemed(redeemable.channelIdSource, HoprChannels.TicketIndex.wrap(maxTicketIndex + indexOffset));
+        vm.expectEmit(true, false, false, true, address(hoprChannels));
+        emit ChannelBalanceIncreased(redeemable.channelIdDest, HoprChannels.Balance.wrap(channelAmount + amount));
+        vm.expectEmit(true, false, false, true, address(hoprChannels));
+        emit TicketRedeemed(redeemable.channelIdDest, HoprChannels.TicketIndex.wrap(maxTicketIndex + indexOffset));
+        vm.prank(dest);
+        hoprChannels.redeemAggregatedTicket(redeemable);
+
+        // Now let's assume the channel is PENDING_TO_CLOSE
+        hoprChannels._storeChannel(
+            src, dest, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.OPEN
+        );
+        hoprChannels._storeChannel(
+            dest, src, channelAmount, channelTicketIndex, 0, epoch, HoprChannels.ChannelStatus.PENDING_TO_CLOSE
+        );
+
+        vm.expectEmit(true, false, false, true, address(hoprChannels));
+        emit ChannelBalanceDecreased(redeemable.channelIdSource, HoprChannels.Balance.wrap(channelAmount - amount));
+        vm.expectEmit(true, false, false, true, address(hoprChannels));
+        emit TicketRedeemed(redeemable.channelIdSource, HoprChannels.TicketIndex.wrap(maxTicketIndex + indexOffset));
+        vm.expectEmit(true, false, false, true, address(hoprChannels));
+        emit ChannelBalanceIncreased(redeemable.channelIdDest, HoprChannels.Balance.wrap(channelAmount + amount));
+        vm.expectEmit(true, false, false, true, address(hoprChannels));
+        emit TicketRedeemed(redeemable.channelIdDest, HoprChannels.TicketIndex.wrap(maxTicketIndex + indexOffset));
+        vm.prank(dest);
+        hoprChannels.redeemAggregatedTicket(redeemable);
     }
 
     function testRevert_CannotRedeemSameWinningTicketMultipleTimes(
